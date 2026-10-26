@@ -1,5 +1,6 @@
 import math
 import tkinter as tk
+from datetime import date, timedelta
 from tkinter import ttk
 
 
@@ -182,6 +183,8 @@ class Scratch:
         self.sprite_visible = True
         self.category = tk.StringVar(value="Motion")
         self.drag_definition = None
+        self.reading_schedule = []
+        self.planner_window = None
 
         self._build_ui()
         self.add_block("when_flag", ())
@@ -224,6 +227,10 @@ class Scratch:
             toolbar, text="Clear blocks", command=self.clear_blocks,
             relief="flat", padx=14, pady=7,
         ).pack(side="left")
+        tk.Button(
+            toolbar, text="Reading planner", command=self.open_reading_planner,
+            relief="flat", padx=14, pady=7,
+        ).pack(side="left", padx=8)
         self.status_var = tk.StringVar(value="Choose blocks from a category to build your script.")
         tk.Label(
             toolbar, textvariable=self.status_var, bg="#f7f7f7",
@@ -351,13 +358,251 @@ class Scratch:
         for definition in blocks:
             text = self._block_name(definition)
             color = CATEGORY_COLORS[self.category.get()]
-            tk.Button(
-                self.palette_area, text=text, anchor="w", command=lambda d=definition: self._add_definition(d),
-                bg=color, fg="white", activebackground=color, activeforeground="white",
-                relief="flat", padx=12, pady=9, font=("Arial", 10, "bold"),
-            ).pack(fill="x", pady=4)
-            button = self.palette_area.winfo_children()[-1]
-            button.bind("<ButtonPress-1>", lambda event, d=definition: self._start_palette_drag(d))
+            block = tk.Canvas(
+                self.palette_area, height=44, bg="#ffffff", highlightthickness=0,
+            )
+            block.pack(fill="x", pady=2)
+            block.bind(
+                "<Configure>",
+                lambda event, widget=block, block_id=definition[0],
+                category=self.category.get(), color=color: self._draw_block_shape(
+                    widget, event.width, event.height, block_id, category, color,
+                ),
+            )
+            self._draw_block_shape(
+                block, block.winfo_width(), 44, definition[0],
+                self.category.get(), color,
+            )
+            block.create_text(
+                14, 22, text=text, anchor="w", fill="white",
+                font=("Arial", 10, "bold"), tags=("block-label",),
+            )
+            block.bind(
+                "<ButtonPress-1>",
+                lambda event, d=definition: self._start_palette_drag(d),
+            )
+            block.bind(
+                "<ButtonRelease-1>",
+                lambda event, d=definition: self._click_palette_block(d),
+            )
+
+    def _click_palette_block(self, definition):
+        if self.drag_definition == definition:
+            self.drag_definition = None
+            self._add_definition(definition)
+
+    def _block_shape(self, block_id, category):
+        if block_id.startswith("when_"):
+            return "hat"
+        if block_id in {
+            "touching", "touching_color", "color_touching", "key_pressed",
+            "mouse_down", "greater_than", "less_than", "equals", "and",
+            "or", "not", "contains",
+        }:
+            return "boolean"
+        if category in {"Operators", "Sensing"} or block_id in {
+            "x_position", "y_position", "direction", "size", "volume",
+            "answer", "loudness", "timer", "mouse_x", "mouse_y",
+            "days_since_2000", "username", "variable", "music_get_tempo",
+        }:
+            return "reporter"
+        return "stack"
+
+    def _draw_block_shape(self, canvas, width, height, block_id, category, color):
+        canvas.delete("block-shape")
+        if width < 2 or height < 2:
+            return
+        shape = self._block_shape(block_id, category)
+        if shape == "reporter":
+            canvas.create_oval(
+                1, 2, width - 1, height - 2, fill=color, outline="",
+                tags=("block-shape",),
+            )
+        elif shape == "boolean":
+            canvas.create_polygon(
+                1, height / 2, 10, 2, width - 10, 2,
+                width - 1, height / 2, width - 10, height - 2,
+                10, height - 2, fill=color, outline="", tags=("block-shape",),
+            )
+        else:
+            points = [
+                0, 10,
+                18, 10, 18, 14, 21, 18, 26, 20, 34, 20,
+                39, 18, 42, 14, 42, 10,
+                width, 10, width, height - 10,
+                39, height - 10, 36, height - 4, 33, height,
+                25, height, 22, height - 4, 19, height - 10,
+                0, height - 10,
+            ]
+            if shape == "hat":
+                points = [
+                    0, 14, 2, 8, 7, 4, 15, 2, 28, 2, 36, 4,
+                    41, 9, 43, 14,
+                    width, 14, width, height - 10,
+                    39, height - 10, 36, height - 4, 33, height,
+                    25, height, 22, height - 4, 19, height - 10,
+                    0, height - 10,
+                ]
+            canvas.create_polygon(
+                *points, fill=color, outline="", tags=("block-shape",),
+            )
+        canvas.tag_lower("block-shape")
+
+    def open_reading_planner(self):
+        if self.planner_window is not None and self.planner_window.winfo_exists():
+            self.planner_window.lift()
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title("Reading Schedule Planner")
+        window.geometry("720x540")
+        window.minsize(600, 420)
+        window.configure(bg="#f7f7f7")
+        self.planner_window = window
+
+        form = tk.Frame(window, bg="#ffffff", padx=16, pady=14)
+        form.pack(fill="x", padx=14, pady=14)
+        tk.Label(
+            form, text="Plan your reading", bg="#ffffff", fg="#575e75",
+            font=("Arial", 16, "bold"),
+        ).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 12))
+
+        self.book_title_var = tk.StringVar()
+        self.page_count_var = tk.StringVar()
+        self.pages_per_day_var = tk.StringVar(value="20")
+        self.start_date_var = tk.StringVar(value=date.today().isoformat())
+        fields = [
+            ("Book", self.book_title_var, 20),
+            ("Total pages", self.page_count_var, 10),
+            ("Pages per day", self.pages_per_day_var, 10),
+            ("Start date (YYYY-MM-DD)", self.start_date_var, 14),
+        ]
+        for column, (label, variable, width) in enumerate(fields):
+            field = tk.Frame(form, bg="#ffffff")
+            field.grid(row=1, column=column, sticky="w", padx=(0, 10))
+            tk.Label(
+                field, text=label, bg="#ffffff", fg="#575e75",
+                font=("Arial", 9, "bold"),
+            ).pack(anchor="w", pady=(0, 4))
+            tk.Entry(field, textvariable=variable, width=width).pack(anchor="w")
+
+        tk.Button(
+            form, text="Create schedule", command=self._generate_reading_schedule,
+            bg="#4caf50", fg="white", activebackground="#43a047",
+            activeforeground="white", relief="flat", padx=12, pady=7,
+            font=("Arial", 10, "bold"),
+        ).grid(row=2, column=0, sticky="w", pady=(14, 0))
+
+        schedule_panel = tk.Frame(window, bg="#ffffff", padx=12, pady=10)
+        schedule_panel.pack(fill="both", expand=True, padx=14, pady=(0, 14))
+        self.reading_summary_var = tk.StringVar(value="Create a schedule to get started.")
+        tk.Label(
+            schedule_panel, textvariable=self.reading_summary_var,
+            bg="#ffffff", fg="#575e75", font=("Arial", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+        columns = ("day", "pages", "status")
+        self.reading_tree = ttk.Treeview(
+            schedule_panel, columns=columns, show="headings", height=12,
+        )
+        self.reading_tree.heading("day", text="Date")
+        self.reading_tree.heading("pages", text="Pages to read")
+        self.reading_tree.heading("status", text="Progress")
+        self.reading_tree.column("day", width=150, anchor="w")
+        self.reading_tree.column("pages", width=180, anchor="w")
+        self.reading_tree.column("status", width=130, anchor="center")
+        scrollbar = ttk.Scrollbar(
+            schedule_panel, orient="vertical", command=self.reading_tree.yview,
+        )
+        self.reading_tree.configure(yscrollcommand=scrollbar.set)
+        self.reading_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        actions = tk.Frame(window, bg="#f7f7f7")
+        actions.pack(fill="x", padx=14, pady=(0, 14))
+        tk.Button(
+            actions, text="Toggle selected as complete",
+            command=self._toggle_reading_day, relief="flat", padx=12, pady=7,
+        ).pack(side="left")
+        self._refresh_reading_schedule()
+        window.protocol("WM_DELETE_WINDOW", self._close_reading_planner)
+
+    def _close_reading_planner(self):
+        if self.planner_window is not None:
+            self.planner_window.destroy()
+        self.planner_window = None
+
+    def _generate_reading_schedule(self):
+        title = self.book_title_var.get().strip()
+        if not title:
+            self.reading_summary_var.set("Enter a book title to create your schedule.")
+            return
+        try:
+            total_pages = int(self.page_count_var.get())
+            pages_per_day = int(self.pages_per_day_var.get())
+            start_day = date.fromisoformat(self.start_date_var.get().strip())
+        except ValueError:
+            self.reading_summary_var.set(
+                "Enter valid positive page counts and a date in YYYY-MM-DD format."
+            )
+            return
+        if total_pages <= 0 or pages_per_day <= 0:
+            self.reading_summary_var.set("Page counts must be greater than zero.")
+            return
+
+        self.reading_schedule = []
+        first_page = 1
+        day_number = 0
+        while first_page <= total_pages:
+            last_page = min(first_page + pages_per_day - 1, total_pages)
+            self.reading_schedule.append({
+                "date": start_day + timedelta(days=day_number),
+                "first_page": first_page,
+                "last_page": last_page,
+                "complete": False,
+            })
+            first_page = last_page + 1
+            day_number += 1
+        self._refresh_reading_schedule(title)
+
+    def _refresh_reading_schedule(self, title=None):
+        if not hasattr(self, "reading_tree") or not self.reading_tree.winfo_exists():
+            return
+        for item in self.reading_tree.get_children():
+            self.reading_tree.delete(item)
+        for index, day in enumerate(self.reading_schedule):
+            status = "Complete" if day["complete"] else "To read"
+            self.reading_tree.insert(
+                "", "end", iid=str(index),
+                values=(
+                    day["date"].strftime("%a, %b %d, %Y"),
+                    f"Pages {day['first_page']}–{day['last_page']}",
+                    status,
+                ),
+            )
+        if title is None:
+            title = self.book_title_var.get().strip() if hasattr(
+                self, "book_title_var"
+            ) else ""
+        if self.reading_schedule:
+            completed = sum(day["complete"] for day in self.reading_schedule)
+            self.reading_summary_var.set(
+                f"{title or 'Reading schedule'} · {completed} of "
+                f"{len(self.reading_schedule)} days complete"
+            )
+        else:
+            self.reading_summary_var.set("Create a schedule to get started.")
+
+    def _toggle_reading_day(self):
+        selected = self.reading_tree.selection()
+        if not selected:
+            self.reading_summary_var.set("Select a reading day to update its progress.")
+            return
+        for item in selected:
+            index = int(item)
+            day = self.reading_schedule[index]
+            day["complete"] = not day["complete"]
+        self._refresh_reading_schedule()
 
     def _start_palette_drag(self, definition):
         self.drag_definition = definition
@@ -423,14 +668,16 @@ class Scratch:
             block_id = block["id"]
             category = self._category_for(block_id)
             color = CATEGORY_COLORS[category]
-            card = tk.Frame(self.workspace, bg=color, padx=9, pady=7)
-            card.pack(anchor="w", fill="x", padx=8, pady=3)
+            card = tk.Canvas(
+                self.workspace, height=52, bg="#ffffff", highlightthickness=0,
+            )
+            card.pack(anchor="w", fill="x", padx=8, pady=1)
 
-            inner = tk.Frame(card, bg=color)
-            inner.pack(side="left", fill="x", expand=True)
-            self._build_block_contents(inner, block)
+            contents = tk.Frame(card, bg=color)
+            contents.pack(fill="x", expand=True, padx=22, pady=(13, 9))
+            self._build_block_contents(contents, block)
 
-            controls = tk.Frame(card, bg=color)
+            controls = tk.Frame(contents, bg=color)
             controls.pack(side="right", padx=(4, 0))
             tk.Button(
                 controls, text="↑", command=lambda i=index: self._move_block(i, -1),
@@ -444,6 +691,16 @@ class Scratch:
                 controls, text="×", command=lambda i=index: self._remove_block(i),
                 bg=color, fg="white", relief="flat", padx=4, font=("Arial", 12, "bold"),
             ).pack(side="left")
+            card.bind(
+                "<Configure>",
+                lambda event, widget=card, block_id=block_id, category=category,
+                color=color: self._draw_block_shape(
+                    widget, event.width, event.height, block_id, category, color,
+                ),
+            )
+            self._draw_block_shape(
+                card, card.winfo_width(), 52, block_id, category, color,
+            )
         self.workspace.update_idletasks()
         self._workspace_changed()
 
