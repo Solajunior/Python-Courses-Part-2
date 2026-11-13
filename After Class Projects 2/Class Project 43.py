@@ -9,7 +9,7 @@ BACKGROUND = "#f3f5f8"
 INK = "#202b3c"
 MUTED = "#65738a"
 ACCENT = "#315e66"
-GRADE_ORDER = ("A", "B", "C", "D", "E", "F")
+GRADE_ORDER = ("A", "B", "C", "D", "E", "F", "HOW")
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,9 @@ def grade_for_mark(mark: float) -> str:
         return "D"
     if mark >= 50:
         return "E"
-    return "F"
+    if mark >= 25:
+        return "F"
+    return "HOW"
 
 
 def analyze_marks(marks: pd.Series) -> MarksSummary:
